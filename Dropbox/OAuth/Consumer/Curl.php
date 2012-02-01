@@ -20,6 +20,7 @@ class Curl extends ConsumerAbstract
 	private $options = array(
 		CURLOPT_SSL_VERIFYPEER => false,
 		CURLOPT_VERBOSE        => true,
+		CURLINFO_HEADER_OUT    => false,
 		CURLOPT_FOLLOWLOCATION => true,
 	);
 	
@@ -30,11 +31,11 @@ class Curl extends ConsumerAbstract
 	 * @param StorageInterface $storage
 	 * @param string $callback
 	 */
-	public function __construct($key, $secret, StorageInterface $storage, $callback)
+	public function __construct($key, $secret, StorageInterface $storage, $callback = null)
 	{
 		// Check the cURL extension is loaded
 		if(!extension_loaded('curl')){
-			throw new \Exception('The cURL OAuth consumer requires the cURL extension');
+			throw new \Dropbox\Exception('The cURL OAuth consumer requires the cURL extension');
 		}
 		
 		$this->consumerKey = $key;
@@ -42,58 +43,6 @@ class Curl extends ConsumerAbstract
 		$this->storage = $storage;
 		$this->callback = $callback;
 		$this->authenticate();
-	}
-	
-	/**
-	 * Acquire an unauthorised request token
-	 * @link http://tools.ietf.org/html/rfc5849#section-2.1
-	 * @return void
-	 */
-	protected function getRequestToken()
-	{
-		$url = API::API_URL . self::REQUEST_TOKEN_METHOD;
-		$response = $this->fetch('POST', $url, '');
-		$token = $this->parseTokenString($response);
-		$this->storage->set($token);
-	}
-	
-	/**
-	 * Obtain user authorisation
-	 * The user will be redirected to Dropbox' web endpoint
-	 * @link http://tools.ietf.org/html/rfc5849#section-2.2
-	 * @return void
-	 */
-	protected function authorise($callbackUrl = null)
-	{
-		// Get the request token
-		$token = $this->getToken();
-		
-		// Prepare request parameters
-		$params = array(
-			'oauth_token' => $token->oauth_token,
-			'oauth_token_secret' => $token->oauth_token_secret,
-			'oauth_callback' => $callbackUrl,
-		);
-		
-		// Build the URL and redirect the user
-		$query = '?' . http_build_query($params, '', '&');
-		$url = self::WEB_URL . self::AUTHORISE_METHOD . $query;
-		header('Location: ' . $url);
-		exit;
-	}
-	
-	/**
-	 * Acquire an access token
-	 * Tokens acquired at this point should be stored to
-	 * prevent having to request new tokens for each API call
-	 * @link http://tools.ietf.org/html/rfc5849#section-2.3
-	 */
-	protected function getAccessToken()
-	{
-		// Get the signed request URL
-		$response = $this->fetch('POST', API::API_URL, self::ACCESS_TOKEN_METHOD);
-		$token = $this->parseTokenString($response);
-		$this->storage->set($token);
 	}
 
 	/**
@@ -106,7 +55,7 @@ class Curl extends ConsumerAbstract
 	 * @param resource $fileHandle optional valid  & open file handle to store the file instead of returning data in memory. You must close it
 	 * @return string|object stdClass
 	 */
-	public function fetch($method, $url, $call = '', array $additional = array(), $fileHandle = null)
+	public function fetch($method, $url, $call, array $additional = array(), $fileHandle = null)
 	{
 		// Get the signed request URL
 		$request = $this->getSignedRequest($method, $url, $call, $additional);
@@ -138,10 +87,10 @@ class Curl extends ConsumerAbstract
 		// Check if an error occurred and throw an Exception
 		if(!empty($response['body']->error)){
 			$message = $response['body']->error . ' (Status Code: ' . $response['code'] . ')';
-			throw new \Exception($message);
+			throw new \Dropbox\Exception($message);
 		}
 		
-		return $response['body'];
+		return $response;
 	}
 	
 	/**
@@ -184,26 +133,6 @@ class Curl extends ConsumerAbstract
 			$body = $response;
 		}
 		
-		return array('code' => $code, 'body' => $body);
-	}
-	
-	/**
-	 * Parse response parameters for a token into an object
-	 * Dropbox returns tokens in the response parameters, and
-	 * not a JSON encoded object as per other API requests
-	 * @link http://oauth.net/core/1.0/#response_parameters
-	 * @param string $response
-	 * @return object stdClass
-	 */
-	private function parseTokenString($response)
-	{
-		$parts = explode('&', $response);
-		$token = new \stdClass();
-		foreach($parts as $part){
-			list($k, $v) = explode('=', $part, 2);
-			$k = strtolower($k);
-			$token->$k = $v;
-		}
-		return $token;
+		return array('code' => $code, 'body' => $body, 'headers' => $headers);
 	}
 }

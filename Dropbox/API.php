@@ -31,6 +31,18 @@ class API
 	private $root;
 	
 	/**
+	 * Format of the API response
+	 * @var string
+	 */
+	private $responseFormat = 'php';
+	
+	/**
+	 * JSONP callback
+	 * @var string
+	 */
+	private $callback = 'dropboxCallback';
+	
+	/**
 	 * Set the OAuth consumer object
 	 * @param OAuth\Consumer $OAuth
 	 */
@@ -49,7 +61,7 @@ class API
 	public function setRoot($root)
 	{
 		if($root !== 'sandbox' && $root !== 'dropbox'){
-			throw new \Exception("Expected a root of either 'dropbox' or 'sandbox', got '$root'");
+			throw new Exception("Expected a root of either 'dropbox' or 'sandbox', got '$root'");
 		} else {
 			$this->root = $root;
 		}
@@ -61,7 +73,7 @@ class API
 	 */
 	public function accountInfo()
 	{
-		$response = $this->OAuth->fetch('POST', self::API_URL, 'account/info');
+		$response = $this->fetch('POST', self::API_URL, 'account/info');
 		return $response;
 	}
 	
@@ -79,7 +91,7 @@ class API
 	{
 		if(file_exists($file)){
 			if(filesize($file) <= 157286400){
-				$call = 'files/' . $this->root . '/' . $this->normalisePath($path);
+				$call = 'files/' . $this->root . '/' . $this->encodePath($path);
 				// If no filename is provided we'll use the original filename
 				$filename = (is_string($filename)) ? $filename : basename($file);
 				$params = array(
@@ -87,14 +99,14 @@ class API
 					'file' => '@' . str_replace('\\', '/', $file) . ';filename=' . $filename,
 					'overwrite' => (int) $overwrite,
 				);
-				$response = $this->OAuth->fetch('POST', self::CONTENT_URL, $call, $params);
+				$response = $this->fetch('POST', self::CONTENT_URL, $call, $params);
 				return $response;
 			}
-			throw new \Exception('File exceeds 150MB upload limit');
+			throw new Exception('File exceeds 150MB upload limit');
 		}
 		
 		// Throw an Exception if the file does not exist
-		throw new \Exception('Local file ' . $file . ' does not exist');
+		throw new Exception('Local file ' . $file . ' does not exist');
 	}
 	
 	/**
@@ -105,12 +117,14 @@ class API
 	 */
 	public function getFile($file, $revision = null, $destFile = null)
 	{
-		// rawurlencode the filename, then replace %2F with / for use in URL
-		$file = $this->normalisePath($file);
-		$encoded = str_replace('%2F', '/', rawurlencode($file));
+		// Only allow php response format for this call
+		if($this->responseFormat !== 'php'){
+			throw new Exception('This method only supports the `php` response format');
+		}
 		
-		$call = 'files/' . $this->root . '/' . $encoded;
-		$params = array('rev' => $revision);
+		$file = $this->encodePath($file);		
+		$call = 'files/' . $this->root . '/' . $file;
+		$params = array('rev' => $revision);	
 		$fileHandle = null;
 		if(!empty($destFile)){
 			$fileHandle = fopen($destFile, 'w');
@@ -124,8 +138,9 @@ class API
 
 		return array(
 			'name' => basename($file),
-			'mime' => $this->getMimeType($response),
-			'data' => $response,
+			'mime' => $this->getMimeType($response['body']),
+			'meta' => json_decode($response['headers']['x-dropbox-metadata']),
+			'data' => $response['body'],
 		);
 	}
 	
@@ -141,7 +156,7 @@ class API
 	 */
 	public function metaData($path = null, $rev = null, $limit = 10000, $hash = false, $list = true, $deleted = false)
 	{
-		$call = 'metadata/' . $this->root . '/' . $this->normalisePath($path);
+		$call = 'metadata/' . $this->root . '/' . $this->encodePath($path);
 		$params = array(
 			'file_limit' => ($limit < 1) ? 1 : (($limit > 10000) ? 10000 : (int) $limit),
 			'hash' => (is_string($hash)) ? $hash : 0,
@@ -149,7 +164,7 @@ class API
 			'include_deleted' => (int) $deleted,
 			'rev' => (is_string($rev)) ? $rev : null,
 		);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -161,11 +176,11 @@ class API
 	 */
 	public function revisions($file, $limit = 10)
 	{
-		$call = 'revisions/' . $this->root . '/' . $this->normalisePath($file);
+		$call = 'revisions/' . $this->root . '/' . $this->encodePath($file);
 		$params = array(
 			'rev_limit' => ($limit < 1) ? 1 : (($limit > 1000) ? 1000 : (int) $limit),
 		);
-		$response = $this->OAuth->fetch('GET', self::API_URL, $call, $params);
+		$response = $this->fetch('GET', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -177,9 +192,9 @@ class API
 	 */
 	public function restore($file, $revision)
 	{
-		$call = 'restore/' . $this->root . '/' . $this->normalisePath($file);
+		$call = 'restore/' . $this->root . '/' . $this->encodePath($file);
 		$params = array('rev' => $revision);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -193,13 +208,13 @@ class API
 	 */
 	public function search($query, $path = '', $limit = 1000, $deleted = false)
 	{
-		$call = 'search/' . $this->root . '/' . $this->normalisePath($path);
+		$call = 'search/' . $this->root . '/' . $this->encodePath($path);
 		$params = array(
 			'query' => $query,
 			'file_limit' => ($limit < 1) ? 1 : (($limit > 1000) ? 1000 : (int) $limit),
 			'include_deleted' => (int) $deleted,
 		);
-		$response = $this->OAuth->fetch('GET', self::API_URL, $call, $params);
+		$response = $this->fetch('GET', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -210,8 +225,8 @@ class API
 	 */
 	public function shares($path)
 	{
-		$call = 'shares/' . $this->root . '/' .$this->normalisePath($path);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call);
+		$call = 'shares/' . $this->root . '/' .$this->encodePath($path);
+		$response = $this->fetch('POST', self::API_URL, $call);
 		return $response;
 	}
 	
@@ -222,8 +237,8 @@ class API
 	 */
 	public function media($path)
 	{
-		$call = 'media/' . $this->root . '/' . $this->normalisePath($path);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call);
+		$call = 'media/' . $this->root . '/' . $this->encodePath($path);
+		$response = $this->fetch('POST', self::API_URL, $call);
 		return $response;
 	}
 	
@@ -236,6 +251,11 @@ class API
 	 */
 	public function thumbnails($file, $format = 'JPEG', $size = 'small')
 	{
+		// Only allow php response format for this call
+		if($this->responseFormat !== 'php'){
+			throw new Exception('This method only supports the `php` response format');
+		}
+		
 		$format = strtoupper($format);
 		// If $format is not 'PNG', default to 'JPEG'
 		if($format != 'PNG') $format = 'JPEG';
@@ -245,16 +265,15 @@ class API
 		// If $size is not valid, default to 'small'
 		if(!in_array($size, $sizes)) $size = 'small';
 		
-		// Encode the filename for use in the signature base string
-		$encoded = rawurlencode($this->normalisePath($file));
-		$call = 'thumbnails/' . $this->root . '/' . $encoded;
+		$call = 'thumbnails/' . $this->root . '/' . $this->encodePath($file);
 		$params = array('format' => $format, 'size' => $size);
 		$response = $this->OAuth->fetch('GET', self::CONTENT_URL, $call, $params);
 		
 		return array(
 			'name' => basename($file),
-			'mime' => $this->getMimeType($response),
-			'data' => $response,
+			'mime' => $this->getMimeType($response['body']),
+			'meta' => json_decode($response['headers']['x-dropbox-metadata']),
+			'data' => $response['body'],
 		);
 	}
 	
@@ -272,7 +291,7 @@ class API
 			'from_path' => $this->normalisePath($from),
 			'to_path' => $this->normalisePath($to),
 		);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -285,7 +304,7 @@ class API
 	{
 		$call = 'fileops/create_folder';
 		$params = array('root' => $this->root, 'path' => $this->normalisePath($path));
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -298,7 +317,7 @@ class API
 	{
 		$call = 'fileops/delete';
 		$params = array('root' => $this->root, 'path' => $this->normalisePath($path));
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
 	}
 	
@@ -316,8 +335,58 @@ class API
 				'from_path' => $this->normalisePath($from),
 				'to_path' => $this->normalisePath($to),
 		);
-		$response = $this->OAuth->fetch('POST', self::API_URL, $call, $params);
+		$response = $this->fetch('POST', self::API_URL, $call, $params);
 		return $response;
+	}
+	
+	/**
+	 * Intermediate fetch function
+	 * @param string $method The HTTP method
+	 * @param string $url The API endpoint
+	 * @param string $call The API method to call
+	 * @param array $params Additional parameters
+	 * @return mixed
+	 */
+	private function fetch($method, $url, $call, array $params = array())
+	{
+		// Make the API call via the consumer
+		$response = $this->OAuth->fetch($method, $url, $call, $params);
+		
+		// Format the response and return
+		switch($this->responseFormat){
+			case 'json':
+				return json_encode($response);
+			case 'jsonp':
+				$response = json_encode($response);
+				return $this->callback . '(' . $response . ')';
+			default:
+				return $response;
+		}
+	}
+	
+	/**
+	 * Set the API response format
+	 * @param string $format One of php, json or jsonp
+	 * @return void
+	 */
+	public function setResponseFormat($format)
+	{
+		$format = strtolower($format);
+		if(!in_array($format, array('php', 'json', 'jsonp'))){
+			throw new Exception("Expected a format of php, json or jsonp, got '$format'");
+		} else {
+			$this->responseFormat = $format;
+		}
+	}
+	
+	/**
+	* Set the JSONP callback function
+	* @param string $function
+	* @return void
+	*/
+	public function setCallback($function)
+	{
+		$this->callback = $function;
 	}
 	
 	/**
@@ -344,6 +413,19 @@ class API
 	private function normalisePath($path)
 	{
 		$path = preg_replace('#/+#', '/', trim($path, '/'));
+		return $path;
+	}
+	
+	/**
+	 * Encode the path, then replace encoded slashes
+	 * with literal forward slash characters
+	 * @param string $path The path to encode
+	 * @return string
+	 */
+	private function encodePath($path)
+	{
+		$path = $this->normalisePath($path);
+		$path = str_replace('%2F', '/', rawurlencode($path));
 		return $path;
 	}
 }
