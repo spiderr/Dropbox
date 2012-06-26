@@ -115,7 +115,7 @@ class API
 	 * @param string $file Path to file, relative to root, including path
 	 * @return array
 	 */
-	public function getFile($file, $revision = null, $destFile = null)
+	public function getFile($file, $destFile = null, $revision = null)
 	{
 		// Only allow php response format for this call
 		if($this->responseFormat !== 'php'){
